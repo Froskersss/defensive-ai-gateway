@@ -1,0 +1,11 @@
+﻿# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*.class
+VENV/
+.env
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
