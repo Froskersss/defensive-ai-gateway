@@ -1,7 +1,3 @@
-Here is your updated, highly professional `README.md` file. It incorporates your notes on future feature expansions, references the **Black October** inspiration with contextual explanation, and keeps all your architecture, defense mechanics, and telemetry details intact.
-
-You can overwrite your local `README.md` file with this complete version:
-
 ```markdown
 # 🛡️ Low-Latency Defensive AI Gateway & Autonomous Red-Teaming PoC
 
@@ -103,7 +99,7 @@ python attacker_agent.py
 To toggle the gateway's security protections on during your demo, run:
 
 ```powershell
-curl "[http://127.0.0.1:8000/admin/toggle-security?enable=true](http://127.0.0.1:8000/admin/toggle-security?enable=true)"
+curl "http://127.0.0.1:8000/admin/toggle-security?enable=true"
 
 ```
 
