@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Aegis Dynamics | Secure Internal Portal</title>
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: #131b2e;
+            --accent-blue: #38bdf8;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --border-color: #1f293d;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 0;
+        }
+        header {
+            background: var(--panel-bg);
+            border-bottom: 1px solid var(--border-color);
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        header h1 {
+            margin: 0;
+            font-size: 22px;
+            letter-spacing: 1px;
+            color: var(--accent-blue);
+        }
+        .badge {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            border: 1px solid var(--accent-red);
+        }
+        .container {
+            max-width: 1400px;
+            margin: 30px auto;
+            padding: 0 20px;
+        }
+        .hidden { display: none !important; }
+        .auth-card {
+            max-width: 400px;
+            margin: 80px auto;
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            padding: 30px;
+            border-radius: 8px;
+        }
+        .auth-card h2 { margin-top: 0; color: var(--accent-blue); text-align: center; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 5px; }
+        input[type="text"], input[type="password"], input[type="email"] {
+            width: 100%;
+            background: #0f172a;
+            border: 1px solid var(--border-color);
+            padding: 10px;
+            color: white;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            width: 100%;
+        }
+        button:hover { background: #1d4ed8; }
+        .toggle-link {
+            text-align: center;
+            margin-top: 15px;
+            font-size: 13px;
+            color: var(--accent-blue);
+            cursor: pointer;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            height: 450px;
+            display: flex;
+            flex-direction: column;
+        }
+        .panel h2 {
+            margin-top: 0;
+            font-size: 18px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+            color: #cbd5e1;
+        }
+        .scrollable-list {
+            overflow-y: auto;
+            flex-grow: 1;
+            padding-right: 5px;
+        }
+        .card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+        .card strong { color: var(--accent-blue); }
+        .search-box {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        .search-box input { flex-grow: 1; }
+        .search-box button { width: auto; }
+        .user-info { display: flex; align-items: center; gap: 15px; font-size: 14px; }
+        .logout-btn { background: var(--accent-red); width: auto; padding: 6px 12px; font-size: 12px; }
+        .error-msg { color: var(--accent-red); font-size: 13px; margin-top: 10px; text-align: center; }
+        .success-msg { color: var(--accent-green); font-size: 13px; margin-top: 10px; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div>
+            <h1>AEGIS DYNAMICS & ORDNANCE</h1>
+            <span style="font-size: 12px; color: var(--text-muted);">Internal Defense Infrastructure & Telemetry Gateway</span>
+        </div>
+        <div id="headerRight" class="hidden">
+            <div class="user-info">
+                <span>Logged in as: <strong id="currentUsername"></strong> (<span id="userClearance" style="color: #facc15;"></span>)</span>
+                <button class="logout-btn" onclick="logout()">Sign Out</button>
+            </div>
+        </div>
+        <div id="headerBadge" class="badge">RESTRICTED ACCESS - LEVEL 4</div>
+    </header>
+
+    <!-- AUTHENTICATION CONTAINER -->
+    <div id="authContainer" class="container">
+        <div class="auth-card">
+            <h2 id="authTitle">Secure Portal Sign In</h2>
+            
+            <div id="loginForm">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="loginUsername" placeholder="Enter username (try: admin)">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="loginPassword" placeholder="Enter password (try: admin123)">
+                </div>
+                <button onclick="handleLogin()">Access Portal</button>
+                <div class="toggle-link" onclick="toggleAuthMode()">Need an account? Sign up</div>
+                <div id="loginMsg"></div>
+            </div>
+
+            <div id="signupForm" class="hidden">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="signupUsername" placeholder="Choose a username">
+                </div>
+                <div class="form-group">
+                    <label>Corporate Email</label>
+                    <input type="email" id="signupEmail" placeholder="name@aegis-defense.internal">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="signupPassword" placeholder="Choose a secure password">
+                </div>
+                <button onclick="handleSignup()">Create Account</button>
+                <div class="toggle-link" onclick="toggleAuthMode()">Already have an account? Sign in</div>
+                <div id="signupMsg"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN DASHBOARD CONTAINER -->
+    <div id="dashboardContainer" class="container hidden">
+        <div class="panel" style="height: auto; margin-bottom: 20px;">
+            <h2>Live Project Search Engine</h2>
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search weapon codenames, categories, or notes (e.g. Ares, Hypersonic)...">
+                <button onclick="performSearch()">Query Database</button>
+            </div>
+            <div id="searchResults" style="max-height: 180px; overflow-y: auto;"></div>
+        </div>
+
+        <div class="grid">
+            <div class="panel">
+                <h2>Weapon Projects Registry (<span id="projCount">Loading...</span>)</h2>
+                <div class="scrollable-list" id="projectList"></div>
+            </div>
+            <div class="panel">
+                <h2>Personnel & Security Clearance Roster</h2>
+                <div class="scrollable-list" id="employeeList"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isSignup = false;
+        function toggleAuthMode() {
+            isSignup = !isSignup;
+            document.getElementById('authTitle').innerText = isSignup ? 'Request Personnel Access' : 'Secure Portal Sign In';
+            document.getElementById('loginForm').classList.toggle('hidden', isSignup);
+            document.getElementById('signupForm').classList.toggle('hidden', !isSignup);
+        }
+
+        async function handleLogin() {
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+            const msgDiv = document.getElementById('loginMsg');
+
+            const res = await fetch('/api/v1/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username, password})
+            });
+            const data = await res.json();
+
+            if(res.ok) {
+                localStorage.setItem('aegis_user', data.username);
+                localStorage.setItem('aegis_clearance', data.clearance);
+                showDashboard(data.username, data.clearance);
+            } else {
+                msgDiv.innerHTML = `<div class="error-msg">${data.detail}</div>`;
+            }
+        }
+
+        async function handleSignup() {
+            const username = document.getElementById('signupUsername').value;
+            const email = document.getElementById('signupEmail').value;
+            const password = document.getElementById('signupPassword').value;
+            const msgDiv = document.getElementById('signupMsg');
+
+            const res = await fetch('/api/v1/signup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username, email, password})
+            });
+            const data = await res.json();
+
+            if(res.ok) {
+                msgDiv.innerHTML = `<div class="success-msg">Account created! Switch to Sign In.</div>`;
+            } else {
+                msgDiv.innerHTML = `<div class="error-msg">${data.detail}</div>`;
+            }
+        }
+
+        function showDashboard(username, clearance) {
+            document.getElementById('authContainer').classList.add('hidden');
+            document.getElementById('dashboardContainer').classList.remove('hidden');
+            document.getElementById('headerRight').classList.remove('hidden');
+            document.getElementById('headerBadge').classList.add('hidden');
+            document.getElementById('currentUsername').innerText = username;
+            document.getElementById('userClearance').innerText = clearance;
+            loadPortalData();
+        }
+
+        function logout() {
+            localStorage.clear();
+            document.getElementById('dashboardContainer').classList.add('hidden');
+            document.getElementById('headerRight').classList.add('hidden');
+            document.getElementById('authContainer').classList.remove('hidden');
+            document.getElementById('headerBadge').classList.remove('hidden');
+        }
+
+        async function loadPortalData() {
+            const projRes = await fetch('/api/v1/search?q=');
+            const projData = await projRes.json();
+            const projContainer = document.getElementById('projectList');
+            document.getElementById('projCount').innerText = projData.matches_found;
+            
+            projContainer.innerHTML = '';
+            projData.results.forEach(p => {
+                projContainer.innerHTML += `
+                    <div class="card">
+                        <strong>${p.codename}</strong> [${p.category}]<br>
+                        Status: <em>${p.status}</em><br>
+                        <small>${p.notes}</small>
+                    </div>`;
+            });
+
+            const empRes = await fetch('/api/v1/employees?limit=100');
+            const empData = await empRes.json();
+            const empContainer = document.getElementById('employeeList');
+            
+            empContainer.innerHTML = '';
+            empData.data.forEach(e => {
+                empContainer.innerHTML += `
+                    <div class="card">
+                        <strong>${e.name}</strong> (${e.code})<br>
+                        Dept: ${e.department} &bull; Clearance: <span style="color: #facc15;">${e.clearance}</span>
+                    </div>`;
+            });
+        }
+
+        async function performSearch() {
+            const query = document.getElementById('searchInput').value;
+            const res = await fetch(`/api/v1/search?q=${encodeURIComponent(query)}`);
+            const data = await res.json();
+            const resultsDiv = document.getElementById('searchResults');
+            
+            resultsDiv.innerHTML = `<strong>Found ${data.matches_found} matches for "${data.query}":</strong><br>`;
+            data.results.forEach(r => {
+                resultsDiv.innerHTML += `<div class="card" style="margin-top: 5px;"><strong>${r.codename}</strong>: ${r.category} (${r.status})</div>`;
+            });
+        }
+
+        window.onload = () => {
+            const savedUser = localStorage.getItem('aegis_user');
+            const savedClearance = localStorage.getItem('aegis_clearance');
+            if(savedUser) {
+                showDashboard(savedUser, savedClearance);
+            }
+        };
+    </script>
+</body>
+</html>

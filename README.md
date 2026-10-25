@@ -1,133 +1,219 @@
-```markdown
-# 🛡️ Low-Latency Defensive AI Gateway & Autonomous Red-Teaming PoC
+# 🛡️ Defensive AI Gateway
 
-A high-performance, dual-layer security reverse proxy designed to protect legacy and microservice backends against autonomous, agentic LLM attacks and path traversal vulnerabilities with sub-millisecond inspection overhead.
+A reverse-proxy security gateway that sits in front of a sample web application and
+inspects traffic for common attack patterns, plus an autonomous LLM-driven agent that
+probes the protected app so the gateway's effect can be measured directly.
 
----
-
-## 💡 Project Inspiration & Vision
-This project was inspired by the recent **"Black October"** cybersecurity events—a stark industry reminder highlighting how rapidly automated threat actors, autonomous agentic worms, and LLM-driven reconnaissance tools can weaponize application vulnerabilities at scale. Traditional static firewalls often struggle against adaptive payloads, prompting the need for lightweight, intelligent edge defenses.
-
-**Future Roadmap & Enterprise Expansion:** 
-This repository represents an active Proof-of-Concept. I am continuously expanding this gateway into a robust, production-grade security appliance by integrating advanced architecture features:
-* **Token-Bucket Rate Limiting:** Automated anti-fuzzing and DoS protection to throttle aggressive scanning IP addresses.
-* **ONNX-Quantized ML Classifiers:** Upgrading Layer 2 semantic checks with lightweight transformer-based intent scoring.
-* **Recursive Canonicalization:** Multi-stage decoding pipelines to neutralize complex triple-URL encoding, Unicode obfuscation, and null-byte tricks.
-* **Structured SIEM Audit Logging:** Streaming security telemetry into JSON-formatted event logs for enterprise observability.
-* **Deception Honeypots:** Returning intelligent decoy payloads instead of standard `403 Forbidden` errors to exhaust automated reconnaissance agents.
+Built as a minor project, inspired by the **"Black October" (October 2026)** wave of
+AI-assisted cybersecurity incidents, which highlighted how quickly automated and
+LLM-driven agents can probe and exploit web applications at scale.
 
 ---
 
-## 🎯 Project Overview
-Modern web applications face increasingly sophisticated threats driven by automated and generative AI agents. This project demonstrates a complete Proof-of-Concept (PoC) architecture featuring a **vulnerable target backend**, a **high-speed defensive proxy gateway**, and an **autonomous LLM red-teaming agent** that dynamically mutates attack payloads to probe for weaknesses.
+## 🏗️ Architecture
+
+Three components run as separate processes, all on `127.0.0.1` only:
+
+| Component | File | Port | Role |
+|---|---|---|---|
+| Target website | `target_website/` (FastAPI + MySQL) | 8002 | A sample internal portal app with login, signup, an employee directory and a project search — the thing being protected. Not hardened on its own. |
+| Defensive gateway | `defensive_gateway.py` | 8000 | Reverse proxy in front of the target. Inspects, rate-limits and logs traffic before forwarding it. |
+| Attacker agent | `attacker_agent.py` | — | A local-LLM-driven script (via [Ollama](https://ollama.com/), `llama3.2:3b`) that performs recon, credential guessing, bulk data requests and injection-style probes against the gateway. Hard-restricted to `127.0.0.1` targets only. |
+
+The attacker always talks to the gateway (port 8000), never directly to the target
+app (port 8002), so every attack passes through inspection when the gateway is enabled.
 
 ---
 
-## 🏗️ System Architecture
+## 🎯 What the gateway does
 
-The project operates on a 3-terminal concurrent execution model:
+The gateway has three modes, switched at runtime via an authenticated admin endpoint:
 
-1. **Target Backend (`target_app.py`)**: A FastAPI microservice hosting an intentional path traversal vulnerability (`/api/v1/download?file=...`) simulating an insecure internal storage endpoint.
-2. **Defensive Gateway Proxy (`defensive_gateway.py`)**: A dual-layer security reverse proxy intercepting all inbound traffic. It features an administrative toggle (`/admin/toggle-security`) for live demonstration switching between vulnerable (Audit) and protected (Secure) modes.
-3. **LLM Attacker Agent (`attacker_agent.py`)**: An autonomous offensive testing agent powered by a local LLM (`llama3.2:3b` via Ollama) that analyzes previous HTTP response feedback loops to adaptively mutate and scale its payload generation strategy.
+- **`off`** — pure pass-through. Baseline for showing the target app's own weaknesses.
+- **`monitor`** — inspects and logs what *would* be blocked, but still forwards everything.
+- **`enforce`** — inspects and actively blocks.
+
+When enforcing, it checks for:
+
+- **Path traversal** and known sensitive-file patterns (`../`, `/etc/passwd`, etc.)
+- **SQL injection–style patterns** (boolean, UNION, stacked queries, time-based, comment injection)
+- **XSS and command-injection–style patterns**
+- **Input canonicalization** — values are URL-decoded and Unicode-normalized repeatedly
+  before matching, to catch simple encoding-based evasion (e.g. `%2e%2e%2f`, double encoding)
+- **Login rate limiting** — per-client and per-username token buckets, to slow down
+  credential stuffing
+- **Signup throttling**
+- **Bulk-scrape protection** on the employee directory — requested page sizes are capped
+- **Repeat-offender bans** — clients that repeatedly trigger blocks are temporarily banned
+- **Hidden API docs** — `/openapi.json`, `/docs`, `/redoc` return a plain 404 when enforcing,
+  so the schema isn't trivially discoverable
+- **Generic block responses** — the client is told a request was blocked but not which rule
+  fired or why, so an adaptive attacker gets minimal feedback to learn from
+
+All decisions are written to `gateway_events.jsonl` (timestamp, client, rule, action, latency).
 
 ---
 
-## 🛡️ Defense Mechanics
+## 🤖 What the attacker agent does
 
-When security mode is enabled, incoming requests undergo a two-tier inspection pipeline:
-* **Layer 1 (Deterministic Regex & Pattern Matching):** Instantly flags and intercepts known path traversal sequences (`../`, URL-encoded dots, hex variations, null-byte injections) in **< 1ms**.
-* **Layer 2 (Semantic Intent Analysis):** Evaluates query parameter structure and behavioral anomaly heuristics to catch novel evasion attempts.
+`attacker_agent.py` runs a fixed recon/credential-stuffing opener, then hands control to
+the local LLM for a few follow-up steps. Per run it attempts:
+
+1. API schema discovery (`/openapi.json`)
+2. A bulk employee-directory request
+3. A short credential wordlist against the login endpoint
+4. An injection-style probe against the search endpoint
+5. 2 LLM-chosen follow-up actions, based on the server's responses so far
+
+Every attempt (endpoint, status code, latency) is appended to `attack_results.jsonl`.
+
+The agent will only ever target `127.0.0.1` / `localhost` — this is enforced in code,
+not just by convention, since it is an autonomous script making its own requests.
 
 ---
 
-## 🚀 Quick Start Guide
+## 📊 Measuring results
 
-### Prerequisites
-* Python 3.10+
-* [Ollama](https://ollama.com/) installed locally with `llama3.2:3b` pulled (`ollama pull llama3.2:3b`).
+`summarize_results.py` reads `attack_results.jsonl` and `gateway_events.jsonl` and prints:
 
-### Installation & Setup
-1. Clone the repository:
-   ```bash
-   git clone [https://github.com/Froskersss/defensive-ai-gateway.git](https://github.com/Froskersss/defensive-ai-gateway.git)
-   cd defensive-ai-gateway
+- Per-run status code breakdown (success / blocked / rate-limited / unauthorized)
+- Which rules fired and how often
+- Average and max inspection latency
 
-```
+Workflow to get a before/after comparison:
 
-2. Create and activate a virtual environment:
 ```bash
-python -m venv venv
-# On Windows (PowerShell):
-.\venv\Scripts\Activate
-
-```
-
-
-3. Install dependencies:
-```bash
-pip install fastapi uvicorn httpx rich ollama
-
-```
-
-
-
----
-
-## 🖥️ Running the Live Demonstration
-
-Open **3 separate terminal windows** inside your virtual environment to run the system concurrently:
-
-* **Terminal 1: Start the Vulnerable Backend**
-```bash
-python target_app.py
-
-```
-
-
-* **Terminal 2: Start the Defensive Gateway Proxy**
-```bash
-python defensive_gateway.py
-
-```
-
-
-* **Terminal 3: Execute the Autonomous AI Attacker Agent**
-```bash
+# 1. gateway starts in 'off' mode by default
 python attacker_agent.py
 
+# 2. switch to enforce mode (see "Admin controls" below)
+
+python attacker_agent.py
+
+# 3. compare the two runs
+python summarize_results.py
 ```
-
-
-
-### Activating Defense Live
-
-To toggle the gateway's security protections on during your demo, run:
-
-```powershell
-curl -UseBasicParsing "[http://127.0.0.1:8000/admin/toggle-security?enable=true](http://127.0.0.1:8000/admin/toggle-security?enable=true)"
-
-```
-
-*(To disable security and demonstrate the raw vulnerability again, set `enable=false`).*
 
 ---
 
-## 📊 Security Telemetry & Results
+## 🚀 Setup
 
-The simulation tracks real-time operational metrics, outputting a detailed statistical evaluation report at the end of each run:
+### Prerequisites
+- Python 3.10+
+- MySQL, running locally, with a database created for the target app
+- [Ollama](https://ollama.com/) with `llama3.2:3b` pulled (`ollama pull llama3.2:3b`)
 
-* **Attack Interception Efficacy:** Achieves **100% block efficacy** against malicious traversal probes and AI-generated evasion variants (`../../etc/shadow`, encoded sequences).
-* **Inspection Overhead:** Adds an average latency penalty of **< 0.9 ms** per request, ensuring high throughput for legitimate users.
+### Install
+```bash
+git clone https://github.com/Froskersss/defensive-ai-gateway.git
+cd defensive-ai-gateway
+python -m venv venv
+# Windows (PowerShell):
+.\venv\Scripts\Activate
+pip install -r requirements.txt
+```
+
+### Configure secrets
+Copy `.env.example` to `.env` and fill in your own values — **`.env` is gitignored and
+must never be committed**:
+```bash
+cp .env.example .env
+```
+```
+DATABASE_URL=mysql+pymysql://root:yourpassword@localhost:3306/your_db_name
+GATEWAY_ADMIN_KEY=choose-a-long-random-secret
+```
 
 ---
 
-## 🛠️ Tech Stack
+## 🖥️ Running the demo
 
-* **Core Framework:** FastAPI, Uvicorn, Python `httpx`
-* **Offensive AI Engine:** Ollama (`llama3.2:3b`)
-* **Terminal UI & Telemetry:** Rich Console & Panels
+Open four terminals:
 
+**Terminal 1 — target website**
+```bash
+cd target_website
+python main.py          # runs on :8002
 ```
 
+**Terminal 2 — gateway**
+```bash
+# (reads GATEWAY_ADMIN_KEY and DATABASE_URL from .env automatically if using python-dotenv,
+#  or set them in this shell session first)
+python defensive_gateway.py     # runs on :8000, starts in 'off' mode
 ```
+
+**Terminal 3 — admin controls**
+
+Switch modes (replace the key with your own from `.env`):
+```bash
+curl -X POST http://127.0.0.1:8000/__gateway/mode \
+  -H "X-Admin-Key: choose-a-long-random-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"enforce"}'
+```
+Valid modes: `off`, `monitor`, `enforce`.
+
+Check current state:
+```bash
+curl http://127.0.0.1:8000/__gateway/stats \
+  -H "X-Admin-Key: choose-a-long-random-secret"
+```
+
+**Terminal 4 — attacker agent**
+```bash
+ollama serve             # if not already running
+python attacker_agent.py
+```
+
+---
+
+## 📈 Sample results
+
+| Scenario | Security OFF | Security ENFORCE |
+|---|---|---|
+| Admin login (correct password) | ✅ Succeeds | ✅ Succeeds (until rate-limited by repeated attempts) |
+| Employee directory, `limit=500` | Returns all matching records uncapped | Clamped to a fixed maximum |
+| `/openapi.json` schema discovery | 200, full schema returned | 404 |
+| Injection-style search probe | Passed through (target query is parameterized, so not actually exploitable) | Blocked with a generic 403 |
+
+*(Run `summarize_results.py` after your own test runs to generate current numbers —
+the table above reflects the shape of the results, not a specific run's exact counts.)*
+
+---
+
+## ⚠️ Limitations
+
+This is a minor-project proof of concept, not a production security tool:
+
+- Detection rules are signature-based (regex on canonicalized input) — they will miss
+  novel encodings or logic-level attacks that don't match known patterns.
+- The target app's `/search` endpoint uses parameterized queries, so it isn't actually
+  SQL-injectable; the gateway blocks injection-*looking* input regardless, but this
+  doesn't demonstrate stopping a real exploit on this particular endpoint.
+- Rate limiting is per-process, in-memory — it resets on restart and doesn't share
+  state across multiple gateway instances.
+- No distinction yet between a genuine LLM agent and a scripted tool making similar
+  requests — detection is based on request content and pacing, not attacker identity.
+- All testing was done against a backend running on localhost, under my control.
+
+Planned next steps (dissertation phase): broader vulnerability coverage (SSRF, more
+injection classes), a baseline comparison against an existing WAF (e.g. ModSecurity +
+OWASP CRS), and evaluating whether session-level behavioral features can distinguish
+LLM-agent traffic from scripted or human traffic.
+
+---
+
+## 🛠️ Tech stack
+
+- **Target app:** FastAPI, SQLAlchemy, MySQL (PyMySQL), Pydantic, Passlib/bcrypt
+- **Gateway:** FastAPI, httpx, Rich (console output)
+- **Attacker agent:** Ollama (`llama3.2:3b`), httpx, Rich
+
+---
+
+## 📄 License & scope
+
+Built for educational use. All attack traffic in this project targets a backend running
+on `127.0.0.1` under the author's own control — the attacker agent is hard-restricted
+to localhost targets in code.

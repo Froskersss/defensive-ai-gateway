@@ -2,9 +2,12 @@
 __pycache__/
 *.py[cod]
 *.class
-VENV/
-.env
 .DS_Store
+VENV/
+*.pyc
+gateway_events.jsonl
+attack_results.jsonl
+.env
 
 # IDEs
 .vscode/

