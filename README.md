@@ -8,7 +8,13 @@ A high-performance, dual-layer security reverse proxy designed to protect legacy
 ## 💡 Project Inspiration & Vision
 This project was inspired by the recent **"Black October"** cybersecurity events—a stark industry reminder highlighting how rapidly automated threat actors, autonomous agentic worms, and LLM-driven reconnaissance tools can weaponize application vulnerabilities at scale. Traditional static firewalls often struggle against adaptive payloads, prompting the need for lightweight, intelligent edge defenses.
 
-**Future Roadmap:** This repository represents an active Proof-of-Concept. I will be continuously expanding and adding features to this gateway over time, including advanced machine learning classification layers, adaptive schema anomaly detection, and real-time threat intelligence feeds.
+**Future Roadmap & Enterprise Expansion:** 
+This repository represents an active Proof-of-Concept. I am continuously expanding this gateway into a robust, production-grade security appliance by integrating advanced architecture features:
+* **Token-Bucket Rate Limiting:** Automated anti-fuzzing and DoS protection to throttle aggressive scanning IP addresses.
+* **ONNX-Quantized ML Classifiers:** Upgrading Layer 2 semantic checks with lightweight transformer-based intent scoring.
+* **Recursive Canonicalization:** Multi-stage decoding pipelines to neutralize complex triple-URL encoding, Unicode obfuscation, and null-byte tricks.
+* **Structured SIEM Audit Logging:** Streaming security telemetry into JSON-formatted event logs for enterprise observability.
+* **Deception Honeypots:** Returning intelligent decoy payloads instead of standard `403 Forbidden` errors to exhaust automated reconnaissance agents.
 
 ---
 
@@ -99,7 +105,7 @@ python attacker_agent.py
 To toggle the gateway's security protections on during your demo, run:
 
 ```powershell
-curl "http://127.0.0.1:8000/admin/toggle-security?enable=true"
+curl -UseBasicParsing "[http://127.0.0.1:8000/admin/toggle-security?enable=true](http://127.0.0.1:8000/admin/toggle-security?enable=true)"
 
 ```
 
